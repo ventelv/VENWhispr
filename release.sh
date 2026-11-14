@@ -11,7 +11,7 @@ VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resour
 DMG="build/VENWhispr-$VERSION.dmg"
 APP="build/VENWhispr.app"
 
-if [ ! -x vendor/bin/whisper-server ] || [ ! -x vendor/bin/llama-server ]; then
+if [ ! -x vendor/bin/whisper-server ] || [ ! -x vendor/bin/llama-server ] || [ ! -f vendor/THIRD-PARTY-NOTICES.txt ]; then
     scripts/build_servers.sh
 fi
 ./build.sh
@@ -24,6 +24,8 @@ codesign --verify --strict --deep "$APP"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 cp -R "$APP" "$STAGE/"
+cp LICENSE "$STAGE/LICENSE.txt"
+cp vendor/THIRD-PARTY-NOTICES.txt "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 rm -f "$DMG"
 hdiutil create -quiet -volname "VENWhispr" -srcfolder "$STAGE" -fs HFS+ -format UDZO "$DMG"

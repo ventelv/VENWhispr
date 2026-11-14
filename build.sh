@@ -22,6 +22,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/arm64-apple-macosx/release/VENWhispr "$APP/Contents/MacOS/VENWhispr"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/"
+cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
 
 # Nested code is signed before the app, whose signature then seals it.
 for server in whisper-server llama-server; do
@@ -31,6 +32,10 @@ for server in whisper-server llama-server; do
         echo "Bundled $server"
     fi
 done
+if [ -x vendor/bin/whisper-server ] || [ -x vendor/bin/llama-server ]; then
+    [ -f vendor/THIRD-PARTY-NOTICES.txt ] || { echo "vendor/THIRD-PARTY-NOTICES.txt is missing: run scripts/build_servers.sh" >&2; exit 1; }
+    cp vendor/THIRD-PARTY-NOTICES.txt "$APP/Contents/Resources/"
+fi
 
 codesign --force --sign "$SIGN_ID" --identifier com.venwhispr.app "$APP"
 echo "Built $APP"

@@ -70,7 +70,30 @@ fetch llama.cpp https://github.com/ggml-org/llama.cpp.git "$LLAMA_TAG" "$LLAMA_C
 
 build whisper.cpp whisper-server -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_SDL2=OFF -DWHISPER_CURL=OFF
 build llama.cpp llama-server -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=ON \
-    -DLLAMA_BUILD_SERVER=ON -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF
+    -DLLAMA_BUILD_SERVER=ON -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF
+
+# The MIT licenses of the code compiled into the two servers ask for their notices to travel with
+# every copy, so build.sh puts this file inside the app.
+NOTICES=vendor/THIRD-PARTY-NOTICES.txt
+notice() {
+    printf '%s\n%s\n%s\n\n' "================================================================================" "$1" "================================================================================"
+    cat "$2"
+    printf '\n\n'
+}
+{
+    echo "VENWhispr includes the following open-source software in its bundled whisper-server and"
+    echo "llama-server programs. Their licenses are reproduced below."
+    echo
+    notice "whisper.cpp $WHISPER_TAG (includes ggml) - https://github.com/ggml-org/whisper.cpp" "$SRC/whisper.cpp/LICENSE"
+    notice "llama.cpp $LLAMA_TAG (includes ggml) - https://github.com/ggml-org/llama.cpp" "$SRC/llama.cpp/LICENSE"
+    notice "cpp-httplib - https://github.com/yhirose/cpp-httplib" "$SRC/llama.cpp/vendor/cpp-httplib/LICENSE"
+    notice "nlohmann/json - https://github.com/nlohmann/json" "$SRC/llama.cpp/licenses/LICENSE-jsonhpp"
+    printf '%s\n%s\n%s\n\n' "================================================================================" "Public domain components (no notice required, credited with thanks)" "================================================================================"
+    echo "miniaudio by David Reid - https://github.com/mackron/miniaudio"
+    echo "stb_image and stb_vorbis by Sean Barrett - https://github.com/nothings/stb"
+    echo "subprocess.h by Neil Henning - https://github.com/sheredom/subprocess.h"
+} > "$NOTICES"
+echo "Wrote $NOTICES"
 
 check whisper-server
 check llama-server
