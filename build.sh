@@ -3,6 +3,9 @@
 #   ./build.sh           build into ./build/VENWhispr.app
 #   ./build.sh install   also copy to /Applications and launch it
 #
+# If scripts/build_servers.sh has been run, whisper-server and llama-server from vendor/bin are
+# bundled inside the app, so it runs on Macs without Homebrew. Otherwise the app uses Homebrew's.
+#
 # Signing: ad-hoc by default, which means macOS forgets the Accessibility grant after every
 # rebuild. To avoid that, create a "Code Signing" certificate in Keychain Access
 # (Certificate Assistant → Create a Certificate…) and run: SIGN_ID="Its Name" ./build.sh
@@ -19,6 +22,15 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/arm64-apple-macosx/release/VENWhispr "$APP/Contents/MacOS/VENWhispr"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/"
+
+# Nested code is signed before the app, whose signature then seals it.
+for server in whisper-server llama-server; do
+    if [ -x "vendor/bin/$server" ]; then
+        cp "vendor/bin/$server" "$APP/Contents/MacOS/$server"
+        codesign --force --sign "$SIGN_ID" --identifier "com.venwhispr.$server" "$APP/Contents/MacOS/$server"
+        echo "Bundled $server"
+    fi
+done
 
 codesign --force --sign "$SIGN_ID" --identifier com.venwhispr.app "$APP"
 echo "Built $APP"

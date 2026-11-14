@@ -60,9 +60,10 @@ final class LocalServer {
         self.healthPath = healthPath
     }
 
+    /// The copy bundled inside the app (Contents/MacOS) first; Homebrew's for builds made without it.
     static func findBinary(_ name: String) -> URL? {
-        ["/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)"]
-            .map(URL.init(fileURLWithPath:))
+        ([Bundle.main.url(forAuxiliaryExecutable: name)].compactMap { $0 }
+            + ["/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)"].map(URL.init(fileURLWithPath:)))
             .first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
@@ -71,10 +72,11 @@ final class LocalServer {
     func start(arguments: [String], environment: [String: String] = [:]) {
         guard process == nil else { return }
         guard let bin = Self.findBinary(binaryName) else {
-            fail("\(binaryName) not found. Run: brew install whisper.cpp")
+            fail("\(binaryName) is missing. Download VENWhispr again from github.com/ventelv/VENWhispr")
             return
         }
         killStale()
+        Self.clearQuarantineIfBundled(bin)
 
         try? FileManager.default.createDirectory(at: Self.logDir, withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
@@ -114,12 +116,39 @@ final class LocalServer {
     func markReady() { status = .ready }
     func fail(_ message: String) { status = .failed(message) }
 
+    /// Stops a server left over from a previous run (e.g. after a force quit) that would hold the port.
+    /// Only processes whose program file really is this server are stopped, so a shell or editor
+    /// whose command line merely mentions "whisper-server --port 8178" is left alone.
     private func killStale() {
-        let pkill = Process()
-        pkill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        pkill.arguments = ["-f", "\(binaryName).*--port \(port)"]
-        try? pkill.run()
-        pkill.waitUntilExit()
+        let pgrep = Process()
+        pgrep.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        pgrep.arguments = ["-f", "--", "--port \(port)( |$)"]
+        let pipe = Pipe()
+        pgrep.standardOutput = pipe
+        guard (try? pgrep.run()) != nil else { return }
+        let output = pipe.fileHandleForReading.readDataToEndOfFile()
+        pgrep.waitUntilExit()
+        let pids = String(decoding: output, as: UTF8.self).split(whereSeparator: \.isNewline).compactMap { pid_t($0) }
+        for pid in pids where Self.programName(of: pid) == binaryName {
+            kill(pid, SIGTERM)
+        }
+    }
+
+    /// A downloaded app's files all carry the quarantine flag. Opening the app (with the user's
+    /// "Open Anyway" approval) clears Gatekeeper for the app, but each server inside it would still be
+    /// blocked on its own. They are part of the app the user just approved and covered by its
+    /// signature, so lift the flag on them before running them. Homebrew's copies are left alone.
+    private static func clearQuarantineIfBundled(_ binary: URL) {
+        let bundled = binary.resolvingSymlinksInPath().path
+            .hasPrefix(Bundle.main.bundleURL.resolvingSymlinksInPath().path + "/")
+        guard bundled else { return }
+        removexattr(binary.path, "com.apple.quarantine", 0)
+    }
+
+    private static func programName(of pid: pid_t) -> String? {
+        var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))   // PROC_PIDPATHINFO_MAXSIZE
+        guard proc_pidpath(pid, &path, UInt32(path.count)) > 0 else { return nil }
+        return URL(fileURLWithPath: String(cString: path)).lastPathComponent
     }
 
     private func waitUntilHealthy(attempt: Int) {

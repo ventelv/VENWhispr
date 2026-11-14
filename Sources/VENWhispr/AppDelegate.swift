@@ -9,10 +9,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let model = AppModel()
     private var settingsWindow: SettingsWindowController?
     private var trustTimer: Timer?
+    private let downloader = ModelDownloader()
+    private var setupWindow: ModelSetupWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // If the app crashed or was force-quit mid-dictation, bring the sound back.
         OutputMuter.restore()
+
+        // Opened straight from the download, macOS runs the app from a hidden read-only copy where
+        // its speech servers can't start. Ask for it to be moved to Applications first.
+        if Bundle.main.bundlePath.contains("/AppTranslocation/") {
+            let alert = NSAlert()
+            alert.messageText = "Move VENWhispr to Applications"
+            alert.informativeText = "VENWhispr can't run from the disk image or Downloads folder. Drag VENWhispr into your Applications folder, then open it from there."
+            alert.addButton(withTitle: "Quit")
+            alert.runModalInFront()
+            NSApp.terminate(nil)
+            return
+        }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
@@ -36,9 +50,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.onLivePreviewChange = { [weak self] on in self?.livePreviewChanged(to: on) }
         model.onRestartWhisper = { [weak self] in self?.dictation.engine.restart() }
         model.onKeepMicWarmChange = { [weak self] on in self?.dictation.mic.keepWarm = on ? 120 : 0 }
-        dictation.engine.start()
-        if settings.aiPunctuation { dictation.punctuation.start() }
-        if settings.livePreview { dictation.preview.engine.start() }
+        // Models are downloaded on first launch; each engine starts once its model is there.
+        downloader.onFinished = { [weak self] in
+            self?.startEngines()
+            self?.updateIcon()
+        }
+        startEngines()
+        if !ModelDownloader.missing.isEmpty { showSetup() }
 
         hotkeys.onDown = { [weak self] key in self?.dictation.hotkeyDown(key) }
         hotkeys.onUp = { [weak self] key in self?.dictation.hotkeyUp(key) }
@@ -62,6 +80,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         dictation.punctuation.stop()
     }
 
+    /// Starts whichever engines have their model and aren't running yet.
+    private func startEngines() {
+        if !dictation.engine.server.isRunning { dictation.engine.start() }
+        if settings.aiPunctuation, !dictation.punctuation.server.isRunning { dictation.punctuation.start() }
+        if settings.livePreview, !dictation.preview.engine.server.isRunning { dictation.preview.engine.start() }
+    }
+
+    @objc private func showSetup() {
+        if setupWindow == nil { setupWindow = ModelSetupWindowController(downloader: downloader) }
+        setupWindow?.show()
+    }
+
     /// Global key monitors only start delivering events once trust is granted, so re-arm them then.
     private func waitForAccessibility() {
         trustTimer?.invalidate()
@@ -83,6 +113,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             (symbol, state) = ("mic.fill", "recording")
         } else if dictation.pendingTranscriptions > 0 {
             (symbol, state) = ("waveform", "transcribing")
+        } else if !ModelDownloader.missing.isEmpty {
+            (symbol, state) = ("arrow.down.circle", downloader.isBusy ? "downloading models" : "needs models")
         } else if case .failed = model.engineStatus {
             (symbol, state) = ("mic.slash", "Whisper stopped")
         } else if !Paster.isTrusted || model.microphoneBlocked {
@@ -106,7 +138,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let header = headerState()
         let keys = settings.activeHotkeys.map { ($0.shortTitle, Language.named(settings.language(for: $0)).name) }
         menu.addItem(MenuHeaderView(status: header.status, tone: header.tone, detail: header.detail, keys: keys).menuItem())
-        if case .failed = model.engineStatus {
+        let modelsMissing = !ModelDownloader.missing.isEmpty
+        if modelsMissing {
+            menu.addItem(notice(downloader.isBusy ? "Show Download Progress…" : "Download Models…", #selector(showSetup)))
+        } else if case .failed = model.engineStatus {
             menu.addItem(notice("Restart Whisper", #selector(restartEngine)))
         }
         if model.microphoneBlocked {
@@ -155,6 +190,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func headerState() -> (status: String, tone: StatusTone, detail: String?) {
+        if !ModelDownloader.missing.isEmpty {
+            if downloader.isBusy {
+                let progress = "\(ModelDownloader.format(downloader.receivedBytes)) of \(ModelDownloader.format(downloader.totalBytes))"
+                return ("Downloading models", .pending, progress)
+            }
+            return ("Needs models", .warn, "Download the speech models to start")
+        }
         if case .failed(let message) = model.engineStatus { return ("Whisper stopped", .danger, message) }
         if model.microphoneBlocked { return ("Needs Microphone", .warn, "Allow microphone access to dictate") }
         if !Paster.isTrusted { return ("Needs Accessibility", .warn, "Text is copied, not pasted, until allowed") }
